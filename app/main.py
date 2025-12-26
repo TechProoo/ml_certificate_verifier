@@ -2,6 +2,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pathlib import Path
+from contextlib import asynccontextmanager
 from .utils.image_utils import load_image_from_bytes
 from .models.detector import get_detector
 from .models.ocr_extractor import get_ocr_extractor
@@ -16,7 +17,42 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Certificate Verification ML Service", version="1.0.0")
+# Initialize models at startup and cleanup at shutdown
+detector = None
+ocr_extractor = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize models on startup and cleanup on shutdown."""
+    global detector, ocr_extractor
+    
+    # Startup
+    try:
+        detector = get_detector()
+        logger.info("CNN detector initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize CNN detector: {str(e)}")
+        logger.warning("Will use fallback predictions")
+    
+    try:
+        ocr_extractor = get_ocr_extractor()
+        logger.info("OCR extractor initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
+        logger.warning("OCR verification will be unavailable")
+    
+    yield
+    
+    # Shutdown (cleanup if needed)
+    logger.info("Shutting down ML service")
+
+
+app = FastAPI(
+    title="Certificate Verification ML Service",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 # Enable CORS for backend communication
 app.add_middleware(
@@ -30,37 +66,11 @@ app.add_middleware(
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Initialize CNN detector and OCR extractor at startup
-detector = None
-ocr_extractor = None
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize models on startup."""
-    global detector, ocr_extractor
-    try:
-        detector = get_detector()
-        logger.info("CNN detector initialized successfully")
-    except Exception as e:
-        logger.warning(f"Failed to initialize CNN detector: {str(e)}")
-        logger.warning("Will use fallback predictions")
-
-    try:
-        ocr_extractor = get_ocr_extractor()
-        logger.info("OCR extractor initialized successfully")
-    except Exception as e:
-        logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
-        logger.warning("OCR verification will be unavailable")
-
 
 @app.get("/")
 async def root():
     """Health check endpoint."""
     return {"message": "Certificate Verification ML Service", "status": "online"}
-
-
-@app.post("/verify")
 async def verify_certificate(
     file: UploadFile = File(...), certificate_type: str = Form("WASSCE")
 ):
@@ -296,4 +306,5 @@ async def upload_certificate(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
-    uvicorn.run(app, host="0.0.0.0", port=port, reload=True)
+    is_dev = os.getenv("NODE_ENV", "development") == "development"
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=is_dev)
