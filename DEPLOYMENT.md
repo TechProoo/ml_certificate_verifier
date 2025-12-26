@@ -56,18 +56,11 @@ docker push yourusername/ml-service
 
 ## Render Deployment
 
-1. Create `render.yaml`:
-
-   ```yaml
-   services:
-     - type: web
-       name: ml-service
-       env: python
-       buildCommand: pip install -r requirements.txt
-       startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-   ```
-
-2. Connect your GitHub repo to Render
+1. Go to [render.com](https://render.com) and create Web Service from GitHub
+2. Settings:
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python -m app.main`
+   - Render automatically sets `PORT` environment variable
 3. Render auto-deploys on push
 
 ## Production Checklist

@@ -11,6 +11,7 @@ import random
 import uvicorn
 import logging
 import io
+import os
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -294,4 +295,5 @@ async def upload_certificate(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=5000, reload=True)
+    port = int(os.getenv("PORT", 5000))
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=True)
