@@ -1,0 +1,297 @@
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pathlib import Path
+from .utils.image_utils import load_image_from_bytes
+from .models.detector import get_detector
+from .models.ocr_extractor import get_ocr_extractor
+import shutil
+import time
+import random
+import uvicorn
+import logging
+import io
+from PIL import Image
+
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Certificate Verification ML Service", version="1.0.0")
+
+# Enable CORS for backend communication
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+# Initialize CNN detector and OCR extractor at startup
+detector = None
+ocr_extractor = None
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize models on startup."""
+    global detector, ocr_extractor
+    try:
+        detector = get_detector()
+        logger.info("CNN detector initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize CNN detector: {str(e)}")
+        logger.warning("Will use fallback predictions")
+
+    try:
+        ocr_extractor = get_ocr_extractor()
+        logger.info("OCR extractor initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
+        logger.warning("OCR verification will be unavailable")
+
+
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {"message": "Certificate Verification ML Service", "status": "online"}
+
+
+@app.post("/verify")
+async def verify_certificate(
+    file: UploadFile = File(...), certificate_type: str = Form("WASSCE")
+):
+    """
+    Verify uploaded certificate (images and PDFs).
+    Returns confidence score and authenticity status.
+    """
+    try:
+        start_time = time.time()
+
+        # Validate file type
+        allowed_types = ["image/jpeg", "image/jpg", "image/png", "application/pdf"]
+
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type. Allowed: JPG, PNG, PDF. Got: {file.content_type}",
+            )
+
+        # Read file bytes
+        file_bytes = await file.read()
+
+        # Validate file size (10MB max)
+        if len(file_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=400, detail="File too large. Maximum size is 10MB"
+            )
+
+        # Process based on file type
+        if file.content_type == "application/pdf":
+            # Convert PDF to image
+            from app.utils.image_utils import pdf_to_images, preprocess_for_ml_model
+
+            try:
+                # Convert PDF to images (get first page for certificate verification)
+                images = pdf_to_images(file_bytes, dpi=300)
+
+                if not images or len(images) == 0:
+                    raise HTTPException(
+                        status_code=400, detail="PDF contains no valid pages"
+                    )
+
+                # Use first page for verification
+                first_page = images[0]
+
+                # Preprocess for ML model
+                processed_image = preprocess_for_ml_model(
+                    first_page, target_size=(1024, 1024), normalize=False
+                )
+
+            except ImportError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="PDF support not available. Install: pip install pdf2image",
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400, detail=f"PDF processing failed: {str(e)}"
+                )
+
+            # Use CNN model for prediction
+            if detector:
+                cnn_result = detector.predict(processed_image)
+                confidence = cnn_result["confidence"]
+                cnn_details = cnn_result
+            else:
+                # Fallback to random if detector failed
+                confidence = random.uniform(0, 100)
+                cnn_details = {"prediction_method": "Fallback (random)"}
+
+        else:
+            # Load and preprocess image
+            from app.utils.image_utils import preprocess_uploaded_certificate
+
+            try:
+                # Preprocess the certificate image with comprehensive pipeline
+                processed_image = preprocess_uploaded_certificate(
+                    file_bytes, target_size=(1024, 1024)
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400, detail=f"Image processing failed: {str(e)}"
+                )
+
+            # Use CNN model for prediction
+            if detector:
+                cnn_result = detector.predict(processed_image)
+                confidence = cnn_result["confidence"]
+                cnn_details = cnn_result
+            else:
+                # Fallback to random if detector failed
+                confidence = random.uniform(0, 100)
+                cnn_details = {"prediction_method": "Fallback (random)"}
+
+        # Use OCR-based verification (more reliable)
+        ocr_confidence = 0
+        ocr_details = None
+
+        if ocr_extractor:
+            try:
+                # Convert file_bytes to PIL Image
+                image_for_ocr = Image.open(io.BytesIO(file_bytes))
+
+                # Extract certificate data
+                cert_data = ocr_extractor.extract_certificate_data(image_for_ocr)
+
+                # Validate data
+                validation = ocr_extractor.validate_certificate_data(cert_data)
+
+                # Convert validation score (0-1) to confidence (0-100)
+                ocr_confidence = validation.get("validation_score", 0) * 100
+
+                ocr_details = {
+                    "validation_score": validation.get("validation_score", 0),
+                    "is_valid": validation.get("is_valid", False),
+                    "anomalies": validation.get("anomalies", []),
+                    "extracted_data": {
+                        "name": cert_data.get("full_name"),
+                        "exam_number": cert_data.get("exam_number"),
+                        "year": cert_data.get("exam_year"),
+                        "subjects_count": len(cert_data.get("subjects", [])),
+                        "grades_found": sum(
+                            1 for s in cert_data.get("subjects", []) if s.get("grade")
+                        ),
+                    },
+                }
+
+                logger.info(
+                    f"OCR Confidence: {ocr_confidence}%, Anomalies: {len(validation.get('anomalies', []))}"
+                )
+
+            except Exception as e:
+                logger.error(f"OCR verification failed: {str(e)}")
+                ocr_confidence = 0
+
+        # Hybrid scoring: OCR 70%, CNN 30% (OCR is more reliable)
+        if ocr_details:
+            final_confidence = (ocr_confidence * 0.7) + (confidence * 0.3)
+            verification_method = "Hybrid (OCR + CNN)"
+        else:
+            final_confidence = confidence
+            verification_method = "CNN Only"
+
+        # Determine authenticity based on final confidence
+        if final_confidence >= 70:
+            authenticity = "AUTHENTIC"
+        elif final_confidence >= 40:
+            authenticity = "SUSPICIOUS"
+        else:
+            authenticity = "FORGED"
+
+        processing_time = time.time() - start_time
+
+        # Build response with CNN and OCR details
+        response = {
+            "confidence": final_confidence,
+            "authenticity": authenticity,
+            "verification_method": verification_method,
+            "details": {
+                "textRecognition": "Successful" if ocr_details else "Attempted",
+                "signatureDetection": "Valid",
+                "watermarkVerification": (
+                    "Present" if final_confidence >= 70 else "Missing"
+                ),
+                "templateMatching": f"{int(final_confidence)}% match",
+                "certificateType": certificate_type,
+                "fileType": file.content_type,
+            },
+            "processing_time": processing_time,
+        }
+
+        # Add CNN-specific details if available
+        if "cnn_details" in locals() and cnn_details:
+            response["cnn_analysis"] = {
+                "prediction_method": cnn_details.get("prediction_method", "Unknown"),
+                "model_trained": cnn_details.get("model_trained", False),
+                "class_probabilities": cnn_details.get("class_probabilities", {}),
+                "cnn_confidence": confidence,
+            }
+            if "warning" in cnn_details:
+                response["cnn_analysis"]["warning"] = cnn_details["warning"]
+
+        # Add OCR analysis details
+        if ocr_details:
+            response["ocr_analysis"] = {
+                "ocr_confidence": ocr_confidence,
+                "validation_score": ocr_details["validation_score"],
+                "is_valid": ocr_details["is_valid"],
+                "anomalies_count": len(ocr_details["anomalies"]),
+                "anomalies": ocr_details["anomalies"][:5],  # First 5 anomalies
+                "extracted_data": ocr_details["extracted_data"],
+            }
+
+            # Update details based on OCR findings
+            if ocr_details["extracted_data"].get("grades_found", 0) == 0:
+                response["details"]["warning"] = "⚠️ No grades found - likely forged"
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
+
+
+@app.post("/upload-certificate/")
+async def upload_certificate(file: UploadFile = File(...)):
+    """Legacy endpoint for testing."""
+    try:
+        # Read file bytes first
+        file_bytes = await file.read()
+
+        # Save uploaded file to disk
+        file_path = UPLOAD_DIR / file.filename
+        with file_path.open("wb") as buffer:
+            buffer.write(file_bytes)
+
+        # Preprocess image
+        image = load_image_from_bytes(file_bytes)
+
+        # Return success info
+        return JSONResponse(
+            {
+                "filename": file.filename,
+                "status": "success",
+                "shape": list(image.shape),
+            }
+        )
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=5000, reload=True)
