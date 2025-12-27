@@ -308,4 +308,11 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     # Railway sets RAILWAY_ENVIRONMENT, disable reload in production
     is_production = os.getenv("RAILWAY_ENVIRONMENT") is not None
-    uvicorn.run(app, host="0.0.0.0", port=port, reload=not is_production)
+    print(f"🚀 Starting ML service on port {port} (Production: {is_production})")
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=not is_production,
+        log_level="info"
+    )
