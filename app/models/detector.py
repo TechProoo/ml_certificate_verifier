@@ -89,10 +89,16 @@ class CertificateDetector:
             self.class_names = ["AUTHENTIC", "SUSPICIOUS", "FORGED"]
 
         # Load pre-trained MobileNetV2 (without top classification layer)
+        # Set cache_dir to persist weights across deployments
+        base_dir = Path(__file__).parent.parent.parent
+        cache_dir = str(base_dir / "models" / "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        
         base_model = MobileNetV2(
             input_shape=(224, 224, 3),
             include_top=False,
             weights="imagenet",  # Use ImageNet pre-trained weights
+            cache_dir=cache_dir  # Cache weights to avoid re-downloading
         )
 
         # Freeze base model layers initially

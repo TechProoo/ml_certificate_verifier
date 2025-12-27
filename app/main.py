@@ -17,43 +17,47 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# Initialize models at startup and cleanup at shutdown
+# Models - lazy loaded on first request
 detector = None
 ocr_extractor = None
+models_loaded = False
+
+
+def load_models():
+    """Lazy load models on first request to avoid blocking startup."""
+    global detector, ocr_extractor, models_loaded
+    
+    if models_loaded:
+        return
+    
+    print("🔄 Loading ML models (lazy initialization)...")
+    
+    try:
+        detector = get_detector()
+        print("✅ CNN detector initialized")
+        logger.info("CNN detector initialized")
+    except Exception as e:
+        print(f"⚠️  CNN detector failed: {str(e)}")
+        logger.warning(f"Failed to initialize CNN detector: {str(e)}")
+    
+    try:
+        ocr_extractor = get_ocr_extractor()
+        print("✅ OCR extractor initialized")
+        logger.info("OCR extractor initialized")
+    except Exception as e:
+        print(f"⚠️  OCR extractor failed: {str(e)}")
+        logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
+    
+    models_loaded = True
+    print("✅ All models loaded")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize models on startup and cleanup on shutdown."""
-    global detector, ocr_extractor
-
-    print("🚀 Starting ML Service initialization...")
-
-    # Startup
-    try:
-        detector = get_detector()
-        print("✅ CNN detector initialized successfully")
-        logger.info("CNN detector initialized successfully")
-    except Exception as e:
-        print(f"⚠️  Failed to initialize CNN detector: {str(e)}")
-        logger.warning(f"Failed to initialize CNN detector: {str(e)}")
-        logger.warning("Will use fallback predictions")
-
-    try:
-        ocr_extractor = get_ocr_extractor()
-        print("✅ OCR extractor initialized successfully")
-        logger.info("OCR extractor initialized successfully")
-    except Exception as e:
-        print(f"⚠️  Failed to initialize OCR extractor: {str(e)}")
-        logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
-        logger.warning("OCR verification will be unavailable")
-
-    print("✅ ML Service ready to accept requests")
+    """Fast startup - models load on first request."""
+    print("🚀 ML Service started (models will load on first request)")
     yield
-
-    # Shutdown (cleanup if needed)
     print("🛑 Shutting down ML service")
-    logger.info("Shutting down ML service")
 
 
 app = FastAPI(
@@ -75,12 +79,11 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 @app.get("/")
 async def root():
-    """Health check endpoint."""
+    """Health check endpoint - responds immediately without loading models."""
     return {
         "message": "Certificate Verification ML Service",
         "status": "online",
-        "cnn_available": detector is not None,
-        "ocr_available": ocr_extractor is not None,
+        "models_loaded": models_loaded
     }
 
 
@@ -88,7 +91,11 @@ async def root():
 async def verify_endpoint(
     file: UploadFile = File(...), certificate_type: str = Form("WASSCE")
 ):
-    """Main verification endpoint - verifies uploaded certificate."""
+    """Main verification endpoint - loads models on first call."""
+    # Lazy load models on first request
+    if not models_loaded:
+        load_models()
+    
     return await verify_certificate(file, certificate_type)
 
 
@@ -327,15 +334,18 @@ async def upload_certificate(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import sys
+
     port = int(os.getenv("PORT", 5000))
     print(f"=" * 60, file=sys.stderr)
     print(f"🚀 STARTING ML SERVICE", file=sys.stderr)
     print(f"   Port: {port}", file=sys.stderr)
     print(f"   Host: 0.0.0.0", file=sys.stderr)
-    print(f"   Railway Environment: {os.getenv('RAILWAY_ENVIRONMENT')}", file=sys.stderr)
+    print(
+        f"   Railway Environment: {os.getenv('RAILWAY_ENVIRONMENT')}", file=sys.stderr
+    )
     print(f"=" * 60, file=sys.stderr)
     sys.stderr.flush()
-    
+
     uvicorn.run(
         app,
         host="0.0.0.0",
