@@ -26,7 +26,7 @@ ocr_extractor = None
 async def lifespan(app: FastAPI):
     """Initialize models on startup and cleanup on shutdown."""
     global detector, ocr_extractor
-    
+
     # Startup
     try:
         detector = get_detector()
@@ -34,24 +34,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to initialize CNN detector: {str(e)}")
         logger.warning("Will use fallback predictions")
-    
+
     try:
         ocr_extractor = get_ocr_extractor()
         logger.info("OCR extractor initialized successfully")
     except Exception as e:
         logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
         logger.warning("OCR verification will be unavailable")
-    
+
     yield
-    
+
     # Shutdown (cleanup if needed)
     logger.info("Shutting down ML service")
 
 
 app = FastAPI(
-    title="Certificate Verification ML Service",
-    version="1.0.0",
-    lifespan=lifespan
+    title="Certificate Verification ML Service", version="1.0.0", lifespan=lifespan
 )
 
 # Enable CORS for backend communication
@@ -71,6 +69,8 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 async def root():
     """Health check endpoint."""
     return {"message": "Certificate Verification ML Service", "status": "online"}
+
+
 async def verify_certificate(
     file: UploadFile = File(...), certificate_type: str = Form("WASSCE")
 ):
@@ -306,5 +306,6 @@ async def upload_certificate(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
-    is_dev = os.getenv("NODE_ENV", "development") == "development"
-    uvicorn.run(app, host="0.0.0.0", port=port, reload=is_dev)
+    # Railway sets RAILWAY_ENVIRONMENT, disable reload in production
+    is_production = os.getenv("RAILWAY_ENVIRONMENT") is not None
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=not is_production)
