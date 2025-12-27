@@ -26,7 +26,7 @@ ocr_extractor = None
 async def lifespan(app: FastAPI):
     """Initialize models on startup and cleanup on shutdown."""
     global detector, ocr_extractor
-    
+
     print("🚀 Starting ML Service initialization...")
 
     # Startup
@@ -80,7 +80,7 @@ async def root():
         "message": "Certificate Verification ML Service",
         "status": "online",
         "cnn_available": detector is not None,
-        "ocr_available": ocr_extractor is not None
+        "ocr_available": ocr_extractor is not None,
     }
 
 
@@ -326,14 +326,21 @@ async def upload_certificate(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
+    import sys
     port = int(os.getenv("PORT", 5000))
-    # Railway sets RAILWAY_ENVIRONMENT, disable reload in production
-    is_production = os.getenv("RAILWAY_ENVIRONMENT") is not None
+    print(f"=" * 60, file=sys.stderr)
+    print(f"🚀 STARTING ML SERVICE", file=sys.stderr)
+    print(f"   Port: {port}", file=sys.stderr)
+    print(f"   Host: 0.0.0.0", file=sys.stderr)
+    print(f"   Railway Environment: {os.getenv('RAILWAY_ENVIRONMENT')}", file=sys.stderr)
+    print(f"=" * 60, file=sys.stderr)
+    sys.stderr.flush()
+    
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=port,
-        reload=False,  # Always disable reload in production
+        reload=False,
         log_level="info",
-        workers=1
+        workers=1,
     )
