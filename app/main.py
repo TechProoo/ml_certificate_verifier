@@ -26,25 +26,33 @@ ocr_extractor = None
 async def lifespan(app: FastAPI):
     """Initialize models on startup and cleanup on shutdown."""
     global detector, ocr_extractor
+    
+    print("🚀 Starting ML Service initialization...")
 
     # Startup
     try:
         detector = get_detector()
+        print("✅ CNN detector initialized successfully")
         logger.info("CNN detector initialized successfully")
     except Exception as e:
+        print(f"⚠️  Failed to initialize CNN detector: {str(e)}")
         logger.warning(f"Failed to initialize CNN detector: {str(e)}")
         logger.warning("Will use fallback predictions")
 
     try:
         ocr_extractor = get_ocr_extractor()
+        print("✅ OCR extractor initialized successfully")
         logger.info("OCR extractor initialized successfully")
     except Exception as e:
+        print(f"⚠️  Failed to initialize OCR extractor: {str(e)}")
         logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
         logger.warning("OCR verification will be unavailable")
 
+    print("✅ ML Service ready to accept requests")
     yield
 
     # Shutdown (cleanup if needed)
+    print("🛑 Shutting down ML service")
     logger.info("Shutting down ML service")
 
 
@@ -68,7 +76,20 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 @app.get("/")
 async def root():
     """Health check endpoint."""
-    return {"message": "Certificate Verification ML Service", "status": "online"}
+    return {
+        "message": "Certificate Verification ML Service",
+        "status": "online",
+        "cnn_available": detector is not None,
+        "ocr_available": ocr_extractor is not None
+    }
+
+
+@app.post("/verify")
+async def verify_endpoint(
+    file: UploadFile = File(...), certificate_type: str = Form("WASSCE")
+):
+    """Main verification endpoint - verifies uploaded certificate."""
+    return await verify_certificate(file, certificate_type)
 
 
 async def verify_certificate(
