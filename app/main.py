@@ -334,10 +334,10 @@ async def upload_certificate(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import sys
-    
+
     # Railway provides PORT as environment variable
     port = int(os.environ.get("PORT", 5000))
-    
+
     # Force immediate output
     print(f"=" * 60, flush=True)
     print(f"🚀 STARTING ML SERVICE", flush=True)
@@ -354,10 +354,11 @@ if __name__ == "__main__":
             port=port,
             reload=False,
             log_level="info",
-            access_log=True
+            access_log=True,
         )
     except Exception as e:
         print(f"❌ FAILED TO START: {e}", flush=True)
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

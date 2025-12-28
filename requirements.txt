@@ -4,7 +4,7 @@ uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
 # Machine Learning & Computer Vision
-tensorflow==2.15.0
+tensorflow>=2.16.0
 opencv-python==4.8.1.78
 numpy==1.24.3
 pillow==10.1.0
