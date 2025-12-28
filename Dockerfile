@@ -20,12 +20,12 @@ COPY . .
 # Create uploads directory
 RUN mkdir -p uploads
 
-# Expose port
-EXPOSE 5000
+# Copy startup script
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:5000/')"
+# Expose port (Railway will override with $PORT)
+EXPOSE 5000
 
 # Run with Python (handles PORT env var automatically)
 CMD ["python", "-m", "app.main"]

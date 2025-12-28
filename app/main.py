@@ -336,20 +336,28 @@ if __name__ == "__main__":
     import sys
     
     # Railway provides PORT as environment variable
-    port = int(os.environ.get("PORT", "5000"))
+    port = int(os.environ.get("PORT", 5000))
     
-    print(f"=" * 60, file=sys.stderr)
-    print(f"🚀 STARTING ML SERVICE", file=sys.stderr)
-    print(f"   Port: {port} (from $PORT env var)", file=sys.stderr)
-    print(f"   Host: 0.0.0.0", file=sys.stderr)
-    print(f"   Railway: {os.environ.get('RAILWAY_ENVIRONMENT', 'local')}", file=sys.stderr)
-    print(f"=" * 60, file=sys.stderr)
-    sys.stderr.flush()
+    # Force immediate output
+    print(f"=" * 60, flush=True)
+    print(f"🚀 STARTING ML SERVICE", flush=True)
+    print(f"   Port: {port} (from $PORT env var)", flush=True)
+    print(f"   Host: 0.0.0.0", flush=True)
+    print(f"   Railway: {os.environ.get('RAILWAY_ENVIRONMENT', 'local')}", flush=True)
+    print(f"   Python: {sys.version}", flush=True)
+    print(f"=" * 60, flush=True)
 
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=port,
-        reload=False,
-        log_level="info"
-    )
+    try:
+        uvicorn.run(
+            "app.main:app",
+            host="0.0.0.0",
+            port=port,
+            reload=False,
+            log_level="info",
+            access_log=True
+        )
+    except Exception as e:
+        print(f"❌ FAILED TO START: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
