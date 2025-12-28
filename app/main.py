@@ -234,13 +234,13 @@ async def verify_certificate(
                 logger.error(f"OCR verification failed: {str(e)}")
                 ocr_confidence = 0
 
-        # Hybrid scoring: OCR 70%, CNN 30% (OCR is more reliable)
+        # Use only OCR for scoring (100% OCR, 0% CNN)
         if ocr_details:
-            final_confidence = (ocr_confidence * 0.7) + (confidence * 0.3)
-            verification_method = "Hybrid (OCR + CNN)"
+            final_confidence = ocr_confidence
+            verification_method = "OCR Only"
         else:
-            final_confidence = confidence
-            verification_method = "CNN Only"
+            final_confidence = 0
+            verification_method = "OCR Only (No Data)"
 
         # Determine authenticity based on final confidence
         if final_confidence >= 70:
