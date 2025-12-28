@@ -14,11 +14,15 @@ logger = logging.getLogger(__name__)
 # Try to import OCR libraries
 try:
     import pytesseract
-
-    # Set Tesseract path for Windows
-    pytesseract.pytesseract.tesseract_cmd = (
-        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-    )
+    import os
+    
+    # Set Tesseract path only for Windows (Railway/Docker uses system tesseract)
+    if os.name == 'nt':  # Windows
+        pytesseract.pytesseract.tesseract_cmd = (
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        )
+    # Linux/Docker: tesseract is in PATH, no need to set
+    
     PYTESSERACT_AVAILABLE = True
 except ImportError:
     PYTESSERACT_AVAILABLE = False
