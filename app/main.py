@@ -115,7 +115,6 @@ async def verify_certificate(
             )
 
 
-        # For both PDF and image, just extract OCR from the file
 
         # Use OCR-based verification (more reliable)
         ocr_confidence = 0
@@ -123,8 +122,18 @@ async def verify_certificate(
 
         if ocr_extractor:
             try:
-                # Convert file_bytes to PIL Image
-                image_for_ocr = Image.open(io.BytesIO(file_bytes))
+                # Handle PDF files
+                if file.content_type == "application/pdf":
+                    from .utils.image_utils import pdf_to_images
+                    images = pdf_to_images(file_bytes)
+                    if not images:
+                        raise Exception("No images extracted from PDF")
+                    # Use the first page for OCR
+                    import PIL.Image
+                    image_for_ocr = PIL.Image.fromarray(images[0])
+                else:
+                    # Convert file_bytes to PIL Image
+                    image_for_ocr = Image.open(io.BytesIO(file_bytes))
 
                 # Extract certificate data
                 cert_data = ocr_extractor.extract_certificate_data(image_for_ocr)
