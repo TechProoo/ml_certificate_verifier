@@ -27,5 +27,5 @@ RUN chmod +x /app/start.sh
 # Expose port (Railway will override with $PORT)
 EXPOSE 5000
 
-# Run with Python (handles PORT env var automatically)
-CMD ["python", "-m", "app.main"]
+# Run with uvicorn CLI as recommended by Railway (shell form for env var expansion)
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-5000}
