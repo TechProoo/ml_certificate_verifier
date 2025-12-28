@@ -26,12 +26,12 @@ models_loaded = False
 def load_models():
     """Lazy load models on first request to avoid blocking startup."""
     global detector, ocr_extractor, models_loaded
-    
+
     if models_loaded:
         return
-    
+
     print("🔄 Loading ML models (lazy initialization)...")
-    
+
     try:
         detector = get_detector()
         print("✅ CNN detector initialized")
@@ -39,7 +39,7 @@ def load_models():
     except Exception as e:
         print(f"⚠️  CNN detector failed: {str(e)}")
         logger.warning(f"Failed to initialize CNN detector: {str(e)}")
-    
+
     try:
         ocr_extractor = get_ocr_extractor()
         print("✅ OCR extractor initialized")
@@ -47,7 +47,7 @@ def load_models():
     except Exception as e:
         print(f"⚠️  OCR extractor failed: {str(e)}")
         logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
-    
+
     models_loaded = True
     print("✅ All models loaded")
 
@@ -83,7 +83,7 @@ async def root():
     return {
         "message": "Certificate Verification ML Service",
         "status": "online",
-        "models_loaded": models_loaded
+        "models_loaded": models_loaded,
     }
 
 
@@ -95,7 +95,7 @@ async def verify_endpoint(
     # Lazy load models on first request
     if not models_loaded:
         load_models()
-    
+
     return await verify_certificate(file, certificate_type)
 
 
@@ -334,15 +334,15 @@ async def upload_certificate(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import sys
-
-    port = int(os.getenv("PORT", 5000))
+    
+    # Railway provides PORT as environment variable
+    port = int(os.environ.get("PORT", "5000"))
+    
     print(f"=" * 60, file=sys.stderr)
     print(f"🚀 STARTING ML SERVICE", file=sys.stderr)
-    print(f"   Port: {port}", file=sys.stderr)
+    print(f"   Port: {port} (from $PORT env var)", file=sys.stderr)
     print(f"   Host: 0.0.0.0", file=sys.stderr)
-    print(
-        f"   Railway Environment: {os.getenv('RAILWAY_ENVIRONMENT')}", file=sys.stderr
-    )
+    print(f"   Railway: {os.environ.get('RAILWAY_ENVIRONMENT', 'local')}", file=sys.stderr)
     print(f"=" * 60, file=sys.stderr)
     sys.stderr.flush()
 
@@ -351,6 +351,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         reload=False,
-        log_level="info",
-        workers=1,
+        log_level="info"
     )
