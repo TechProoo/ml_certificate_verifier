@@ -4,7 +4,6 @@ from fastapi.responses import JSONResponse
 from pathlib import Path
 from contextlib import asynccontextmanager
 from .utils.image_utils import load_image_from_bytes
-from .models.detector import get_detector
 from .models.ocr_extractor import get_ocr_extractor
 import shutil
 import time
@@ -17,29 +16,18 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# Models - lazy loaded on first request
-detector = None
+
 ocr_extractor = None
 models_loaded = False
 
 
-def load_models():
-    """Lazy load models on first request to avoid blocking startup."""
-    global detector, ocr_extractor, models_loaded
 
+def load_models():
+    """Lazy load OCR model on first request to avoid blocking startup."""
+    global ocr_extractor, models_loaded
     if models_loaded:
         return
-
-    print("🔄 Loading ML models (lazy initialization)...")
-
-    try:
-        detector = get_detector()
-        print("✅ CNN detector initialized")
-        logger.info("CNN detector initialized")
-    except Exception as e:
-        print(f"⚠️  CNN detector failed: {str(e)}")
-        logger.warning(f"Failed to initialize CNN detector: {str(e)}")
-
+    print("🔄 Loading OCR model (lazy initialization)...")
     try:
         ocr_extractor = get_ocr_extractor()
         print("✅ OCR extractor initialized")
@@ -47,9 +35,8 @@ def load_models():
     except Exception as e:
         print(f"⚠️  OCR extractor failed: {str(e)}")
         logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
-
     models_loaded = True
-    print("✅ All models loaded")
+    print("✅ OCR model loaded")
 
 
 @asynccontextmanager
@@ -127,71 +114,8 @@ async def verify_certificate(
                 status_code=400, detail="File too large. Maximum size is 10MB"
             )
 
-        # Process based on file type
-        if file.content_type == "application/pdf":
-            # Convert PDF to image
-            from app.utils.image_utils import pdf_to_images, preprocess_for_ml_model
 
-            try:
-                # Convert PDF to images (get first page for certificate verification)
-                images = pdf_to_images(file_bytes, dpi=300)
-
-                if not images or len(images) == 0:
-                    raise HTTPException(
-                        status_code=400, detail="PDF contains no valid pages"
-                    )
-
-                # Use first page for verification
-                first_page = images[0]
-
-                # Preprocess for ML model
-                processed_image = preprocess_for_ml_model(
-                    first_page, target_size=(1024, 1024), normalize=False
-                )
-
-            except ImportError:
-                raise HTTPException(
-                    status_code=500,
-                    detail="PDF support not available. Install: pip install pdf2image",
-                )
-            except Exception as e:
-                raise HTTPException(
-                    status_code=400, detail=f"PDF processing failed: {str(e)}"
-                )
-
-            # Use CNN model for prediction
-            if detector:
-                cnn_result = detector.predict(processed_image)
-                confidence = cnn_result["confidence"]
-                cnn_details = cnn_result
-            else:
-                # Fallback to random if detector failed
-                confidence = random.uniform(0, 100)
-                cnn_details = {"prediction_method": "Fallback (random)"}
-
-        else:
-            # Load and preprocess image
-            from app.utils.image_utils import preprocess_uploaded_certificate
-
-            try:
-                # Preprocess the certificate image with comprehensive pipeline
-                processed_image = preprocess_uploaded_certificate(
-                    file_bytes, target_size=(1024, 1024)
-                )
-            except Exception as e:
-                raise HTTPException(
-                    status_code=400, detail=f"Image processing failed: {str(e)}"
-                )
-
-            # Use CNN model for prediction
-            if detector:
-                cnn_result = detector.predict(processed_image)
-                confidence = cnn_result["confidence"]
-                cnn_details = cnn_result
-            else:
-                # Fallback to random if detector failed
-                confidence = random.uniform(0, 100)
-                cnn_details = {"prediction_method": "Fallback (random)"}
+        # For both PDF and image, just extract OCR from the file
 
         # Use OCR-based verification (more reliable)
         ocr_confidence = 0
@@ -234,7 +158,8 @@ async def verify_certificate(
                 logger.error(f"OCR verification failed: {str(e)}")
                 ocr_confidence = 0
 
-        # Use only OCR for scoring (100% OCR, 0% CNN)
+
+        # Use only OCR for scoring (100% OCR)
         if ocr_details:
             final_confidence = ocr_confidence
             verification_method = "OCR Only"
@@ -270,16 +195,8 @@ async def verify_certificate(
             "processing_time": processing_time,
         }
 
-        # Add CNN-specific details if available
-        if "cnn_details" in locals() and cnn_details:
-            response["cnn_analysis"] = {
-                "prediction_method": cnn_details.get("prediction_method", "Unknown"),
-                "model_trained": cnn_details.get("model_trained", False),
-                "class_probabilities": cnn_details.get("class_probabilities", {}),
-                "cnn_confidence": confidence,
-            }
-            if "warning" in cnn_details:
-                response["cnn_analysis"]["warning"] = cnn_details["warning"]
+
+        # (No CNN details, OCR only)
 
         # Add OCR analysis details
         if ocr_details:
