@@ -21,7 +21,6 @@ ocr_extractor = None
 models_loaded = False
 
 
-
 def load_models():
     """Lazy load OCR model on first request to avoid blocking startup."""
     global ocr_extractor, models_loaded
@@ -114,8 +113,6 @@ async def verify_certificate(
                 status_code=400, detail="File too large. Maximum size is 10MB"
             )
 
-
-
         # Use OCR-based verification (more reliable)
         ocr_confidence = 0
         ocr_details = None
@@ -125,11 +122,13 @@ async def verify_certificate(
                 # Handle PDF files
                 if file.content_type == "application/pdf":
                     from .utils.image_utils import pdf_to_images
+
                     images = pdf_to_images(file_bytes)
                     if not images:
                         raise Exception("No images extracted from PDF")
                     # Use the first page for OCR
                     import PIL.Image
+
                     image_for_ocr = PIL.Image.fromarray(images[0])
                 else:
                     # Convert file_bytes to PIL Image
@@ -167,7 +166,6 @@ async def verify_certificate(
                 logger.error(f"OCR verification failed: {str(e)}")
                 ocr_confidence = 0
 
-
         # Use only OCR for scoring (100% OCR)
         if ocr_details:
             final_confidence = ocr_confidence
@@ -186,7 +184,7 @@ async def verify_certificate(
 
         processing_time = time.time() - start_time
 
-        # Build response with CNN and OCR details
+        # Build response with OCR details
         response = {
             "confidence": final_confidence,
             "authenticity": authenticity,
@@ -203,7 +201,6 @@ async def verify_certificate(
             },
             "processing_time": processing_time,
         }
-
 
         # (No CNN details, OCR only)
 
