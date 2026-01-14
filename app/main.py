@@ -205,14 +205,14 @@ async def verify_certificate(
                 cnn_result = None
                 cnn_used = False
 
-        # Compute final score using 70/30 rule (OCR 70% + CNN 30%)
+        # Compute final score using 80/20 rule (OCR 80% + CNN 20%)
         # - OCR confidence: derived from validation_score (0-100)
         # - CNN score: AUTHENTIC probability (0-100), only if CNN model is trained
         if ocr_details and cnn_used:
-            final_confidence = (0.7 * float(ocr_confidence)) + (
-                0.3 * float(cnn_authentic_score)
+            final_confidence = (0.8 * float(ocr_confidence)) + (
+                0.2 * float(cnn_authentic_score)
             )
-            verification_method = "Weighted (OCR 70% + CNN 30%)"
+            verification_method = "Weighted (OCR 80% + CNN 20%)"
         elif ocr_details:
             final_confidence = float(ocr_confidence)
             verification_method = "OCR Only"
@@ -255,7 +255,7 @@ async def verify_certificate(
         response["score_breakdown"] = {
             "ocr_confidence": float(ocr_confidence) if ocr_details else 0.0,
             "cnn_authentic_score": float(cnn_authentic_score) if cnn_used else 0.0,
-            "weights": {"ocr": 0.7, "cnn": 0.3},
+            "weights": {"ocr": 0.8, "cnn": 0.2},
             "cnn_used": bool(cnn_used),
         }
 
