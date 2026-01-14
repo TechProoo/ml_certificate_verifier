@@ -24,6 +24,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.layers import BatchNormalization
 from tensorflow.keras.callbacks import (
     ModelCheckpoint,
     EarlyStopping,
@@ -102,6 +103,13 @@ def train_model(args):
     print(f"Epochs: {args.epochs}")
     print(f"Batch Size: {args.batch_size}")
     print(f"Learning Rate: {args.learning_rate}")
+    print(f"Fine-tune: {'enabled' if args.fine_tune_epochs > 0 else 'disabled'}")
+    if args.fine_tune_epochs > 0:
+        print(f"  Fine-tune epochs: {args.fine_tune_epochs}")
+        print(f"  Fine-tune LR: {args.fine_tune_learning_rate}")
+        print(f"  Unfreeze last N layers: {args.unfreeze_last_n_layers}")
+    print(f"Class weights: {'enabled' if args.use_class_weights else 'disabled'}")
+    print(f"Label smoothing: {args.label_smoothing}")
     print("=" * 80)
 
     # Check if training data exists
@@ -147,11 +155,19 @@ def train_model(args):
     detector = CertificateDetector()
     model = detector._create_model(num_classes=num_classes)
 
+    # Compile with optional label smoothing
+    loss_fn = keras.losses.CategoricalCrossentropy(label_smoothing=args.label_smoothing)
+
     # Always recompile with fresh optimizer to avoid cached state issues
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=args.learning_rate),
-        loss="categorical_crossentropy",
-        metrics=["accuracy", keras.metrics.Precision(), keras.metrics.Recall()],
+        loss=loss_fn,
+        metrics=[
+            "accuracy",
+            keras.metrics.TopKCategoricalAccuracy(k=2, name="top2_acc"),
+            keras.metrics.Precision(),
+            keras.metrics.Recall(),
+        ],
     )
 
     print("✅ Model created successfully")
@@ -179,8 +195,19 @@ def train_model(args):
         TensorBoard(log_dir=str(logs_dir), histogram_freq=1, write_graph=True),
     ]
 
-    # Train model
-    print(f"\n🚀 Starting training for {args.epochs} epochs...")
+    # Optional class weighting for imbalanced datasets
+    class_weight = None
+    if args.use_class_weights:
+        counts = np.bincount(train_gen.classes)
+        counts = counts.astype(np.float32)
+        counts[counts == 0] = 1.0
+        total = float(np.sum(counts))
+        num = float(len(counts))
+        class_weight = {i: (total / (num * float(c))) for i, c in enumerate(counts)}
+        print(f"\n⚖️  Using class weights: {class_weight}")
+
+    # Phase 1: train classifier head (backbone frozen by detector)
+    print(f"\n🚀 Starting training (phase 1) for {args.epochs} epochs...")
     print("=" * 80)
 
     history = model.fit(
@@ -189,7 +216,51 @@ def train_model(args):
         validation_data=val_gen,
         callbacks=callbacks,
         verbose=1,
+        class_weight=class_weight,
     )
+
+    # Phase 2: fine-tune backbone (improves accuracy once head has stabilized)
+    if args.fine_tune_epochs > 0:
+        print("\n🧩 Fine-tuning backbone (phase 2)...")
+
+        # Unfreeze last N layers (keep BatchNorm frozen for stability)
+        for layer in model.layers:
+            layer.trainable = True
+
+        for layer in model.layers:
+            if isinstance(layer, BatchNormalization):
+                layer.trainable = False
+
+        if args.unfreeze_last_n_layers > 0:
+            # Freeze all but the last N layers
+            for layer in model.layers[: -args.unfreeze_last_n_layers]:
+                layer.trainable = False
+
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=args.fine_tune_learning_rate),
+            loss=loss_fn,
+            metrics=[
+                "accuracy",
+                keras.metrics.TopKCategoricalAccuracy(k=2, name="top2_acc"),
+                keras.metrics.Precision(),
+                keras.metrics.Recall(),
+            ],
+        )
+
+        fine_tune_history = model.fit(
+            train_gen,
+            epochs=args.epochs + args.fine_tune_epochs,
+            initial_epoch=history.epoch[-1] + 1,
+            validation_data=val_gen,
+            callbacks=callbacks,
+            verbose=1,
+            class_weight=class_weight,
+        )
+
+        # Merge history objects for reporting
+        for k, v in fine_tune_history.history.items():
+            history.history.setdefault(k, [])
+            history.history[k].extend([float(x) for x in v])
 
     # Save final model
     final_model_path = models_dir / "certificate_detector_final.h5"
@@ -257,6 +328,40 @@ def main():
         type=int,
         default=32,
         help="Batch size for training (default: 32)",
+    )
+
+    parser.add_argument(
+        "--fine-tune-epochs",
+        type=int,
+        default=0,
+        help="Extra epochs for backbone fine-tuning (default: 0; set >0 to enable)",
+    )
+
+    parser.add_argument(
+        "--fine-tune-learning-rate",
+        type=float,
+        default=1e-5,
+        help="Learning rate for fine-tuning phase (default: 1e-5)",
+    )
+
+    parser.add_argument(
+        "--unfreeze-last-n-layers",
+        type=int,
+        default=40,
+        help="Unfreeze only the last N model layers during fine-tuning (default: 40; 0 = unfreeze all)",
+    )
+
+    parser.add_argument(
+        "--use-class-weights",
+        action="store_true",
+        help="Use class weights to reduce imbalance bias (recommended if classes are uneven)",
+    )
+
+    parser.add_argument(
+        "--label-smoothing",
+        type=float,
+        default=0.05,
+        help="Label smoothing for categorical cross-entropy (default: 0.05)",
     )
 
     parser.add_argument(

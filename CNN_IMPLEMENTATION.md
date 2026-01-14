@@ -22,9 +22,12 @@
 ### 3. **Training Infrastructure** - [scripts/train_model.py](scripts/train_model.py)
 
 - **Data Augmentation**: Rotation, zoom, brightness, shear for better generalization
+- **Two-Phase Training**: Train head first, then fine-tune backbone for higher accuracy
+- **Imbalance Handling**: Optional class weights to reduce bias when classes are uneven
+- **Stability Improvements**: Optional label smoothing to reduce overconfidence
 - **Callbacks**: ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, TensorBoard
 - **Progress Tracking**: Saves training history, class indices, best model
-- **Command Line Interface**: Customizable epochs, batch size, learning rate
+- **Command Line Interface**: Customizable epochs, batch size, learning rate, fine-tuning
 
 ### 4. **Model Evaluation** - [scripts/evaluate_model.py](scripts/evaluate_model.py)
 
@@ -63,6 +66,9 @@ result = detector.predict(processed_image)
 # 1. Collect training data (200+ samples per class)
 # 2. Train model
 python scripts/train_model.py --epochs 50 --batch-size 32
+
+# Recommended for most real datasets (imbalance + better generalization)
+python scripts/train_model.py --epochs 40 --fine-tune-epochs 15 --use-class-weights
 
 # 3. Evaluate model
 python scripts/evaluate_model.py --test-dir training_data/test --plot
@@ -173,9 +179,9 @@ Final Verdict + Confidence Score
 - **Input Size**: 224×224×3 (RGB)
 - **Architecture**: MobileNetV2 + Custom Head
 - **Parameters**: ~2.3M trainable parameters
-- **Optimizer**: Adam (lr=0.001)
-- **Loss**: Categorical Crossentropy
-- **Metrics**: Accuracy, Precision, Recall
+- **Optimizer**: Adam (default head lr=0.001, default fine-tune lr=1e-5)
+- **Loss**: Categorical Crossentropy (supports label smoothing)
+- **Metrics**: Accuracy, Top-2 Accuracy, Precision, Recall
 - **Inference Time**: ~50-100ms per image (CPU)
 
 ## Files Created

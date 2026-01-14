@@ -209,7 +209,9 @@ async def verify_certificate(
         # - OCR confidence: derived from validation_score (0-100)
         # - CNN score: AUTHENTIC probability (0-100), only if CNN model is trained
         if ocr_details and cnn_used:
-            final_confidence = (0.7 * float(ocr_confidence)) + (0.3 * float(cnn_authentic_score))
+            final_confidence = (0.7 * float(ocr_confidence)) + (
+                0.3 * float(cnn_authentic_score)
+            )
             verification_method = "Weighted (OCR 70% + CNN 30%)"
         elif ocr_details:
             final_confidence = float(ocr_confidence)
