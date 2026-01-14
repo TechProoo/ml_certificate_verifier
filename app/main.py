@@ -5,6 +5,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from .utils.image_utils import load_image_from_bytes
 from .models.ocr_extractor import get_ocr_extractor
+from .models.detector import get_detector
 import shutil
 import time
 import random
@@ -18,15 +19,16 @@ logger = logging.getLogger(__name__)
 
 
 ocr_extractor = None
+cnn_detector = None
 models_loaded = False
 
 
 def load_models():
-    """Lazy load OCR model on first request to avoid blocking startup."""
-    global ocr_extractor, models_loaded
+    """Lazy load OCR + CNN models on first request to avoid blocking startup."""
+    global ocr_extractor, cnn_detector, models_loaded
     if models_loaded:
         return
-    print("🔄 Loading OCR model (lazy initialization)...")
+    print("🔄 Loading ML models (lazy initialization)...")
     try:
         ocr_extractor = get_ocr_extractor()
         print("✅ OCR extractor initialized")
@@ -34,8 +36,18 @@ def load_models():
     except Exception as e:
         print(f"⚠️  OCR extractor failed: {str(e)}")
         logger.warning(f"Failed to initialize OCR extractor: {str(e)}")
+
+    try:
+        cnn_detector = get_detector()
+        print("✅ CNN detector initialized")
+        logger.info("CNN detector initialized")
+    except Exception as e:
+        cnn_detector = None
+        print(f"⚠️  CNN detector failed: {str(e)}")
+        logger.warning(f"Failed to initialize CNN detector: {str(e)}")
+
     models_loaded = True
-    print("✅ OCR model loaded")
+    print("✅ ML models loaded")
 
 
 @asynccontextmanager
@@ -113,9 +125,16 @@ async def verify_certificate(
                 status_code=400, detail="File too large. Maximum size is 10MB"
             )
 
-        # Use OCR-based verification (more reliable)
+        # Use OCR-based verification
         ocr_confidence = 0
         ocr_details = None
+
+        # Optional CNN-based verification (used in weighted scoring when trained)
+        cnn_result = None
+        cnn_authentic_score = 0.0  # 0-100 (probability of AUTHENTIC)
+        cnn_used = False
+
+        image_for_analysis = None
 
         if ocr_extractor:
             try:
@@ -133,6 +152,9 @@ async def verify_certificate(
                 else:
                     # Convert file_bytes to PIL Image
                     image_for_ocr = Image.open(io.BytesIO(file_bytes))
+
+                # Use the same image for OCR and CNN analysis
+                image_for_analysis = image_for_ocr
 
                 # Extract certificate data
                 cert_data = ocr_extractor.extract_certificate_data(image_for_ocr)
@@ -166,13 +188,38 @@ async def verify_certificate(
                 logger.error(f"OCR verification failed: {str(e)}")
                 ocr_confidence = 0
 
-        # Use only OCR for scoring (100% OCR)
-        if ocr_details:
-            final_confidence = ocr_confidence
+        # Run CNN prediction if available and we have an image
+        if cnn_detector is not None and image_for_analysis is not None:
+            try:
+                cnn_result = cnn_detector.predict(image_for_analysis)
+
+                # Only use CNN score in weighted result if the CNN is actually trained
+                if cnn_result.get("model_trained"):
+                    class_probs = cnn_result.get("class_probabilities") or {}
+                    cnn_authentic_score = float(class_probs.get("authentic", 0.0))
+                    cnn_used = True
+                else:
+                    cnn_used = False
+            except Exception as e:
+                logger.warning(f"CNN prediction failed: {str(e)}")
+                cnn_result = None
+                cnn_used = False
+
+        # Compute final score using 70/30 rule (OCR 70% + CNN 30%)
+        # - OCR confidence: derived from validation_score (0-100)
+        # - CNN score: AUTHENTIC probability (0-100), only if CNN model is trained
+        if ocr_details and cnn_used:
+            final_confidence = (0.7 * float(ocr_confidence)) + (0.3 * float(cnn_authentic_score))
+            verification_method = "Weighted (OCR 70% + CNN 30%)"
+        elif ocr_details:
+            final_confidence = float(ocr_confidence)
             verification_method = "OCR Only"
+        elif cnn_used:
+            final_confidence = float(cnn_authentic_score)
+            verification_method = "CNN Only"
         else:
-            final_confidence = 0
-            verification_method = "OCR Only (No Data)"
+            final_confidence = 0.0
+            verification_method = "No Data"
 
         # Determine authenticity based on final confidence
         if final_confidence >= 70:
@@ -202,7 +249,17 @@ async def verify_certificate(
             "processing_time": processing_time,
         }
 
-        # (No CNN details, OCR only)
+        # Add scoring breakdown (useful for debugging + transparency)
+        response["score_breakdown"] = {
+            "ocr_confidence": float(ocr_confidence) if ocr_details else 0.0,
+            "cnn_authentic_score": float(cnn_authentic_score) if cnn_used else 0.0,
+            "weights": {"ocr": 0.7, "cnn": 0.3},
+            "cnn_used": bool(cnn_used),
+        }
+
+        # Include CNN analysis when available (even if not used)
+        if cnn_result is not None:
+            response["cnn_analysis"] = cnn_result
 
         # Add OCR analysis details
         if ocr_details:
